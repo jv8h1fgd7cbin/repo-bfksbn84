@@ -9,8 +9,12 @@ class Settings(BaseSettings):
     telegram_session_name: str = "pet_finder"
     admin_user_id: int = 0
 
-    openai_api_key: str
+    ai_provider: str = "openai"  # openai | anthropic
+    openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    anthropic_api_key: str = ""
+    anthropic_base_url: str = ""
+    anthropic_model: str = "claude-3-5-haiku-latest"
 
     postgres_host: str = "postgres"
     postgres_port: int = 5432
