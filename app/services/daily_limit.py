@@ -83,6 +83,16 @@ async def pop_failed_analyses() -> list[int]:
     return [int(m) for m in members]
 
 
+async def get_analyzed_count(user_id: int) -> int:
+    """Сколько сообщений пользователя было при последнем успешном ИИ-анализе."""
+    val = await _redis.hget("analyzed_counts", user_id)
+    return int(val or 0)
+
+
+async def set_analyzed_count(user_id: int, count: int) -> None:
+    await _redis.hset("analyzed_counts", user_id, count)
+
+
 def _minute_key(dt: datetime) -> str:
     return f"processed:{dt:%Y-%m-%d-%H-%M}"
 

@@ -283,9 +283,8 @@ class PetFinderMonitor:
                 db_chat.backfilled = True
                 db_chat.last_message_id = max_id
             await session.commit()
-        # ИИ-анализ один раз на пользователя по всей его истории (а не на каждое сообщение)
-        for user_id in touched:
-            await self._reanalyze_user(user_id)
+        # ИИ-анализ один раз на пользователя по всей его истории, порциями (защита от 429)
+        await self._reanalyze_users_batched(touched)
         logger.info("Backfill done for %s (%d users analyzed)", chat.title, len(touched))
 
     async def _catch_up_all(self) -> None:
@@ -325,8 +324,7 @@ class PetFinderMonitor:
             async with SessionMaker() as session:
                 await repository.set_last_message_id(session, chat.chat_id, max_id)
                 await session.commit()
-        for user_id in touched:
-            await self._reanalyze_user(user_id)
+        await self._reanalyze_users_batched(touched)
 
     # ---------------------------------------------------------------- realtime
 
@@ -390,12 +388,18 @@ class PetFinderMonitor:
         return sender.id
 
     async def _reanalyze_user(self, user_id: int) -> None:
-        """ИИ пересматривает категорию по всей истории сообщений пользователя."""
+        """ИИ пересматривает категорию по всей истории сообщений пользователя.
+
+        Если с прошлого успешного анализа новых сообщений не появилось —
+        запрос к ИИ не делается (экономия лимитов провайдера)."""
         async with self._analyze_lock:
             async with SessionMaker() as session:
                 messages = await repository.get_user_messages(session, user_id)
+                total = await repository.count_user_messages(session, user_id)
             if not messages:
                 return
+            if total == await daily_limit.get_analyzed_count(user_id):
+                return  # нечего пересматривать — состав сообщений не менялся
             try:
                 category, confidence, reason = await analyze_user(messages)
             except AIUnavailableError:
@@ -406,14 +410,29 @@ class PetFinderMonitor:
             async with SessionMaker() as session:
                 await repository.update_category(session, user_id, category, confidence)
                 await session.commit()
+            await daily_limit.set_analyzed_count(user_id, total)
             logger.info(
                 "User %s -> %s (%.0f%%): %s", user_id, category.value, confidence, reason
             )
 
+    async def _reanalyze_users_batched(self, user_ids) -> None:
+        """Анализ порциями: пачка пользователей — пауза — следующая пачка (защита от 429)."""
+        ids = list(user_ids)
+        for i in range(0, len(ids), settings.ai_batch_size):
+            for user_id in ids[i : i + settings.ai_batch_size]:
+                await self._reanalyze_user(user_id)
+            if i + settings.ai_batch_size < len(ids):
+                logger.info(
+                    "AI batch %d/%d done, pausing %ss",
+                    i // settings.ai_batch_size + 1,
+                    -(-len(ids) // settings.ai_batch_size),
+                    settings.ai_batch_pause_seconds,
+                )
+                await asyncio.sleep(settings.ai_batch_pause_seconds)
+
     async def _retry_failed_analyses(self) -> None:
         """Повторяет ИИ-анализ пользователей, отложенный из-за сбоя ИИ."""
-        for user_id in await daily_limit.pop_failed_analyses():
-            await self._reanalyze_user(user_id)
+        await self._reanalyze_users_batched(await daily_limit.pop_failed_analyses())
 
     # ---------------------------------------------------------------- helpers
 

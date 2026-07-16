@@ -70,6 +70,13 @@ async def get_user_messages(session: AsyncSession, user_id: int, limit: int = 50
     return [r[0] for r in reversed(rows.all())]
 
 
+async def count_user_messages(session: AsyncSession, user_id: int) -> int:
+    result = await session.execute(
+        select(func.count()).select_from(UserMessage).where(UserMessage.user_id == user_id)
+    )
+    return result.scalar_one()
+
+
 async def update_category(
     session: AsyncSession, user_id: int, category: Category, confidence: float
 ) -> None:

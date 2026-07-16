@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     redis_host: str = "redis"
     redis_port: int = 6379
 
+    # Защита от 429 у ИИ-провайдера: троттлинг, backoff и обработка порциями
+    ai_min_interval_seconds: float = 3.0  # минимальная пауза между запросами к ИИ
+    ai_retry_max_attempts: int = 5  # попыток при 429/5xx (с ожиданием по Retry-After)
+    ai_backoff_base_seconds: int = 30  # базовое ожидание при 429 без Retry-After
+    ai_batch_size: int = 10  # сколько пользователей анализировать подряд
+    ai_batch_pause_seconds: int = 60  # пауза между порциями анализа
+
     daily_new_users_limit: int = 100
     history_backfill_limit: int = 2000
     min_messages_for_category: int = 2
