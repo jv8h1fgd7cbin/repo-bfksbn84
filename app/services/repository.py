@@ -156,6 +156,13 @@ async def search_users(
     return list(rows.scalars())
 
 
+async def list_chats(session: AsyncSession) -> list[MonitoredChat]:
+    rows = await session.execute(
+        select(MonitoredChat).order_by(MonitoredChat.status, MonitoredChat.title)
+    )
+    return list(rows.scalars())
+
+
 async def dashboard_stats(session: AsyncSession) -> dict:
     def count_category(cat: Category):
         return select(func.count()).select_from(PetOwner).where(PetOwner.category == cat)

@@ -4,7 +4,13 @@ import logging
 import re
 
 from telethon import TelegramClient, events
-from telethon.errors import ChannelPrivateError, ChatAdminRequiredError, FloodWaitError, InviteHashInvalidError
+from telethon.errors import (
+    ChannelPrivateError,
+    ChatAdminRequiredError,
+    FloodWaitError,
+    InviteHashInvalidError,
+    PeerIdInvalidError,
+)
 from telethon.tl.types import Channel, Chat, Message, User
 
 from app.config import settings
@@ -187,9 +193,30 @@ class PetFinderMonitor:
             except FloodWaitError as e:
                 await self._log("floodwait", f"backfill {chat.title}: {e.seconds}s")
                 await asyncio.sleep(e.seconds + 1)
+            except (ChannelPrivateError, ChatAdminRequiredError):
+                # доступ потерян — снимаем с активной индексации и просим админа вступить снова
+                await self._mark_chat_status(chat.chat_id, ChatStatus.PENDING_ACCESS, "Доступ потерян")
+                await self._notify_admin(
+                    "Потерян доступ к чату\n"
+                    f"Название: {chat.title}\n"
+                    f"Username: @{chat.username or '—'}\n"
+                    "Причина: Доступ потерян — вступите заново для продолжения индексации."
+                )
+            except (PeerIdInvalidError, ValueError):
+                # чат неразрешим (удалён/битый id) — помечаем ошибкой, чтобы не долбить каждый цикл
+                logger.warning("Backfill: unresolvable peer %s, marking error", chat.title)
+                await self._mark_chat_status(chat.chat_id, ChatStatus.ERROR, "Чат недоступен/удалён")
             except Exception:
                 logger.exception("Backfill failed for %s", chat.title)
                 await self._log("error", f"backfill failed: {chat.title}")
+
+    async def _mark_chat_status(self, chat_id: int, status: ChatStatus, reason: str) -> None:
+        async with SessionMaker() as session:
+            chat = await session.get(MonitoredChat, chat_id)
+            if chat:
+                chat.status = status
+                chat.reason = reason
+            await session.commit()
 
     async def _backfill_chat(self, chat: MonitoredChat) -> None:
         logger.info("Backfilling %s", chat.title)
@@ -229,6 +256,10 @@ class PetFinderMonitor:
             except FloodWaitError as e:
                 await self._log("floodwait", f"catch-up {chat.title}: {e.seconds}s")
                 await asyncio.sleep(e.seconds + 1)
+            except (ChannelPrivateError, ChatAdminRequiredError):
+                await self._mark_chat_status(chat.chat_id, ChatStatus.PENDING_ACCESS, "Доступ потерян")
+            except (PeerIdInvalidError, ValueError):
+                await self._mark_chat_status(chat.chat_id, ChatStatus.ERROR, "Чат недоступен/удалён")
             except Exception:
                 logger.exception("Catch-up failed for %s", chat.title)
 

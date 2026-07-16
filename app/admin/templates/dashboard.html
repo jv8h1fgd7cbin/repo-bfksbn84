@@ -2,46 +2,207 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="refresh" content="30">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pet Owner Finder — Админ-панель</title>
   <style>
-    body { font-family: system-ui, sans-serif; background: #f5f6fa; margin: 0; padding: 24px; }
-    h1 { margin-top: 0; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
-    .card { background: #fff; border-radius: 10px; padding: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-    .card .value { font-size: 32px; font-weight: 700; }
-    .card .label { color: #666; margin-top: 4px; }
-    .exports { margin-top: 32px; }
-    .exports a { margin-right: 10px; }
+    :root {
+      --bg: #f4f6fb; --card: #fff; --ink: #1f2430; --muted: #6b7280;
+      --line: #e6e9f0; --brand: #4f46e5; --dog: #2563eb; --cat: #db2777;
+      --both: #7c3aed; --undef: #9ca3af; --ok: #16a34a; --warn: #d97706; --err: #dc2626;
+    }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+           background: var(--bg); color: var(--ink); margin: 0; }
+    header { background: linear-gradient(90deg,#4f46e5,#7c3aed); color: #fff;
+             padding: 18px 28px; display: flex; align-items: center; justify-content: space-between; }
+    header h1 { margin: 0; font-size: 20px; }
+    header .meta { font-size: 13px; opacity: .9; }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 24px 28px 48px; }
+    .section-title { margin: 28px 0 12px; font-size: 15px; text-transform: uppercase;
+                     letter-spacing: .06em; color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+            padding: 16px 18px; }
+    .card .value { font-size: 30px; font-weight: 700; line-height: 1.1; }
+    .card .label { color: var(--muted); margin-top: 6px; font-size: 13px; }
+    .card.accent-dog { border-left: 4px solid var(--dog); }
+    .card.accent-cat { border-left: 4px solid var(--cat); }
+    .card.accent-both { border-left: 4px solid var(--both); }
+    .card.accent-undef { border-left: 4px solid var(--undef); }
+    .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+             padding: 18px; }
+    .filters { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+               gap: 12px; align-items: end; }
+    .filters label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    .filters input, .filters select { width: 100%; padding: 8px 10px; border: 1px solid var(--line);
+               border-radius: 8px; font-size: 14px; background: #fff; }
+    .btns { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
+    button { cursor: pointer; border: none; border-radius: 8px; padding: 9px 16px; font-size: 14px;
+             font-weight: 600; }
+    .btn-primary { background: var(--brand); color: #fff; }
+    .btn-ghost { background: #eef0f7; color: var(--ink); }
+    table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 14px; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+    .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px;
+             font-weight: 600; color: #fff; }
+    .b-dog { background: var(--dog); } .b-cat { background: var(--cat); }
+    .b-dog_and_cat { background: var(--both); } .b-undefined { background: var(--undef); }
+    .b-active { background: var(--ok); } .b-pending_access { background: var(--warn); }
+    .b-error { background: var(--err); } .b-backfilling { background: var(--brand); }
+    .conf-bar { background: #eef0f7; border-radius: 6px; height: 8px; width: 90px; overflow: hidden; }
+    .conf-fill { height: 100%; background: var(--brand); }
+    .muted { color: var(--muted); }
+    .empty { padding: 24px; text-align: center; color: var(--muted); }
+    .export-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+    .export-row .cat { min-width: 150px; font-weight: 600; }
+    .export-row a { text-decoration: none; color: var(--brand); font-weight: 600; font-size: 13px;
+                    border: 1px solid var(--line); padding: 4px 10px; border-radius: 7px; }
+    a.chatlink { color: var(--brand); text-decoration: none; }
   </style>
 </head>
 <body>
-  <h1>🐾 Pet Owner Finder</h1>
-  <div class="grid">
-    <div class="card"><div class="value">{{ stats.chats_active }}</div><div class="label">Обработано групп</div></div>
-    <div class="card"><div class="value">{{ stats.chats_pending }}</div><div class="label">Ожидают подключения</div></div>
-    <div class="card"><div class="value">{{ stats.dog_owners }}</div><div class="label">Владельцы собак</div></div>
-    <div class="card"><div class="value">{{ stats.cat_owners }}</div><div class="label">Владельцы кошек</div></div>
-    <div class="card"><div class="value">{{ stats.dog_and_cat_owners }}</div><div class="label">Кошки + собаки</div></div>
-    <div class="card"><div class="value">{{ stats.undefined }}</div><div class="label">Не определено</div></div>
-    <div class="card"><div class="value">{{ stats.new_today }}</div><div class="label">Новых пользователей сегодня</div></div>
-    <div class="card"><div class="value">{{ stats.total_users }}</div><div class="label">Всего пользователей</div></div>
-    <div class="card"><div class="value">{{ stats.processed_last_hour }}</div><div class="label">Сообщений за час</div></div>
-    <div class="card"><div class="value">{{ stats.joins_today }}</div><div class="label">Вступлений сегодня</div></div>
-    <div class="card"><div class="value">{{ stats.errors_24h }}</div><div class="label">Ошибки (24ч)</div></div>
-    <div class="card"><div class="value">{{ stats.floodwait_24h }}</div><div class="label">FloodWait (24ч)</div></div>
-    <div class="card"><div class="value">✅</div><div class="label">Статус аккаунта</div></div>
+  <header>
+    <h1>🐾 Pet Owner Finder — админ-панель</h1>
+    <div class="meta">
+      Статус аккаунта: <b id="acct">✅ активен</b> · обновлено <span id="updated">—</span>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <div class="section-title">Пользователи</div>
+    <div class="grid">
+      <div class="card accent-dog"><div class="value" id="s_dog">0</div><div class="label">🐕 Владельцы собак</div></div>
+      <div class="card accent-cat"><div class="value" id="s_cat">0</div><div class="label">🐈 Владельцы кошек</div></div>
+      <div class="card accent-both"><div class="value" id="s_both">0</div><div class="label">🐕🐈 Кошки + собаки</div></div>
+      <div class="card accent-undef"><div class="value" id="s_undef">0</div><div class="label">❔ Не определено</div></div>
+      <div class="card"><div class="value" id="s_new">0</div><div class="label">Новых сегодня</div></div>
+      <div class="card"><div class="value" id="s_total">0</div><div class="label">Всего пользователей</div></div>
+    </div>
+
+    <div class="section-title">Система</div>
+    <div class="grid">
+      <div class="card"><div class="value" id="s_active">0</div><div class="label">Обработано групп</div></div>
+      <div class="card"><div class="value" id="s_pending">0</div><div class="label">Ожидают вступления</div></div>
+      <div class="card"><div class="value" id="s_joins">0</div><div class="label">Вступлений сегодня</div></div>
+      <div class="card"><div class="value" id="s_speed">0</div><div class="label">Сообщений за час</div></div>
+      <div class="card"><div class="value" id="s_err">0</div><div class="label">Ошибки (24ч)</div></div>
+      <div class="card"><div class="value" id="s_flood">0</div><div class="label">FloodWait (24ч)</div></div>
+    </div>
+
+    <div class="section-title">Поиск владельцев</div>
+    <div class="panel">
+      <div class="filters">
+        <div><label>Username</label><input id="f_username" placeholder="без @"></div>
+        <div><label>User ID</label><input id="f_user_id" inputmode="numeric"></div>
+        <div><label>Имя</label><input id="f_name"></div>
+        <div><label>Категория</label>
+          <select id="f_category">
+            <option value="">Любая</option>
+            <option value="dog">Собаки</option>
+            <option value="cat">Кошки</option>
+            <option value="dog_and_cat">Кошки + собаки</option>
+            <option value="undefined">Не определено</option>
+          </select>
+        </div>
+        <div><label>Chat ID</label><input id="f_chat_id" inputmode="numeric"></div>
+        <div><label>Дата с</label><input id="f_date_from" type="date"></div>
+        <div><label>Дата по</label><input id="f_date_to" type="date"></div>
+      </div>
+      <div class="btns">
+        <button class="btn-primary" onclick="doSearch()">Найти</button>
+        <button class="btn-ghost" onclick="resetSearch()">Сбросить</button>
+        <span class="muted" id="search_count" style="align-self:center"></span>
+      </div>
+      <div id="results"></div>
+    </div>
+
+    <div class="section-title">Отслеживаемые чаты</div>
+    <div class="panel"><div id="chats"></div></div>
+
+    <div class="section-title">Экспорт списков</div>
+    <div class="panel" id="exports"></div>
   </div>
 
-  <div class="exports">
-    <h2>Экспорт</h2>
-    {% for cat in ["dog", "cat", "dog_and_cat", "undefined", "all"] %}
-      <p><b>{{ cat }}</b>:
-        <a href="/api/export/{{ cat }}/csv">CSV</a>
-        <a href="/api/export/{{ cat }}/xlsx">Excel</a>
-        <a href="/api/export/{{ cat }}/json">JSON</a>
-      </p>
-    {% endfor %}
-  </div>
+  <script>
+    const CAT_LABEL = {dog: "Собаки", cat: "Кошки", dog_and_cat: "Кошки + собаки", undefined: "Не определено"};
+    const STATUS_LABEL = {active: "Активен", pending_access: "Ожидает вступления", error: "Ошибка", backfilling: "Индексация"};
+
+    async function loadStats() {
+      const s = await (await fetch("/api/stats")).json();
+      const set = (id, v) => document.getElementById(id).textContent = v ?? 0;
+      set("s_dog", s.dog_owners); set("s_cat", s.cat_owners); set("s_both", s.dog_and_cat_owners);
+      set("s_undef", s.undefined); set("s_new", s.new_today); set("s_total", s.total_users);
+      set("s_active", s.chats_active); set("s_pending", s.chats_pending); set("s_joins", s.joins_today);
+      set("s_speed", s.processed_last_hour); set("s_err", s.errors_24h); set("s_flood", s.floodwait_24h);
+      document.getElementById("acct").textContent = s.errors_24h > 20 ? "⚠️ проверьте логи" : "✅ активен";
+      document.getElementById("updated").textContent = new Date().toLocaleTimeString("ru-RU");
+    }
+
+    function badge(cat) { return `<span class="badge b-${cat}">${CAT_LABEL[cat] || cat}</span>`; }
+    function fmtDate(s) { return s ? new Date(s).toLocaleString("ru-RU") : "—"; }
+
+    async function doSearch() {
+      const q = new URLSearchParams();
+      const g = id => document.getElementById(id).value.trim();
+      if (g("f_username")) q.set("username", g("f_username").replace(/^@/, ""));
+      if (g("f_user_id")) q.set("user_id", g("f_user_id"));
+      if (g("f_name")) q.set("name", g("f_name"));
+      if (g("f_category")) q.set("category", g("f_category"));
+      if (g("f_chat_id")) q.set("chat_id", g("f_chat_id"));
+      if (g("f_date_from")) q.set("date_from", g("f_date_from"));
+      if (g("f_date_to")) q.set("date_to", g("f_date_to"));
+      const data = await (await fetch("/api/search?" + q.toString())).json();
+      document.getElementById("search_count").textContent = `Найдено: ${data.count}`;
+      const box = document.getElementById("results");
+      if (!data.results.length) { box.innerHTML = '<div class="empty">Ничего не найдено</div>'; return; }
+      let rows = data.results.map(r => `<tr>
+        <td>${r.user_id}</td>
+        <td>${r.username ? "@" + r.username : "—"}</td>
+        <td>${[r.first_name, r.last_name].filter(Boolean).join(" ") || "—"}</td>
+        <td>${badge(r.category)}</td>
+        <td><div class="conf-bar"><div class="conf-fill" style="width:${r.confidence || 0}%"></div></div>
+            <span class="muted">${Math.round(r.confidence || 0)}%</span></td>
+        <td class="muted">${fmtDate(r.first_seen_at)}</td>
+        <td class="muted">${fmtDate(r.last_message_at)}</td></tr>`).join("");
+      box.innerHTML = `<table><thead><tr><th>User ID</th><th>Username</th><th>Имя</th>
+        <th>Категория</th><th>Уверенность</th><th>Первое обнаружение</th><th>Последнее сообщение</th>
+        </tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function resetSearch() {
+      ["f_username","f_user_id","f_name","f_category","f_chat_id","f_date_from","f_date_to"]
+        .forEach(id => document.getElementById(id).value = "");
+      doSearch();
+    }
+
+    async function loadChats() {
+      const data = await (await fetch("/api/chats")).json();
+      const box = document.getElementById("chats");
+      if (!data.chats.length) { box.innerHTML = '<div class="empty">Пока нет чатов</div>'; return; }
+      let rows = data.chats.map(c => `<tr>
+        <td>${c.title || "—"}</td>
+        <td>${c.username ? '<a class="chatlink" href="'+ (c.link || "#") +'" target="_blank">@'+ c.username +'</a>' : "—"}</td>
+        <td><span class="badge b-${c.status}">${STATUS_LABEL[c.status] || c.status}</span></td>
+        <td class="muted">${c.reason || ""}</td>
+        <td class="muted">${c.chat_id}</td></tr>`).join("");
+      box.innerHTML = `<table><thead><tr><th>Название</th><th>Username</th><th>Статус</th>
+        <th>Причина</th><th>Chat ID</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function buildExports() {
+      const cats = [["dog","🐕 Собаки"],["cat","🐈 Кошки"],["dog_and_cat","🐕🐈 Кошки + собаки"],
+                    ["undefined","❔ Не определено"],["all","📦 Все"]];
+      document.getElementById("exports").innerHTML = cats.map(([c, label]) => `
+        <div class="export-row"><span class="cat">${label}</span>
+          <a href="/api/export/${c}/csv">CSV</a>
+          <a href="/api/export/${c}/xlsx">Excel</a>
+          <a href="/api/export/${c}/json">JSON</a></div>`).join("");
+    }
+
+    function refreshAll() { loadStats(); loadChats(); }
+    buildExports(); refreshAll(); doSearch();
+    setInterval(refreshAll, 15000);
+  </script>
 </body>
 </html>

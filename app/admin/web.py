@@ -55,7 +55,26 @@ async def api_search(
         owners = await repository.search_users(
             session, username, user_id, name, category, chat_id, date_from, date_to, limit
         )
-    return exporter.to_json(owners)
+    return {"count": len(owners), "results": exporter.to_records(owners)}
+
+
+@app.get("/api/chats")
+async def api_chats():
+    async with SessionMaker() as session:
+        chats = await repository.list_chats(session)
+    return {
+        "chats": [
+            {
+                "chat_id": c.chat_id,
+                "title": c.title,
+                "username": c.username,
+                "link": c.link,
+                "status": c.status.value,
+                "reason": c.reason,
+            }
+            for c in chats
+        ]
+    }
 
 
 @app.get("/api/export/{category}/{fmt}")

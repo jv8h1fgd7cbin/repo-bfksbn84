@@ -11,6 +11,11 @@ FIELDS = ["user_id", "username", "first_name", "last_name", "category",
           "confidence", "first_seen_at", "last_message_at"]
 
 
+def to_records(owners: list[PetOwner]) -> list[dict]:
+    """Список словарей для JSON-API (та же схема, что и экспорт)."""
+    return _rows(owners)
+
+
 def _rows(owners: list[PetOwner]) -> list[dict]:
     return [
         {
