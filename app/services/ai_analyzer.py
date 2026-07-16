@@ -99,6 +99,10 @@ async def is_relevant_group(sample_messages: list[str]) -> tuple[bool, str]:
         return False, "ai_error"
 
 
+class AIUnavailableError(Exception):
+    """ИИ временно недоступен — существующую категорию перезаписывать нельзя."""
+
+
 async def analyze_user(messages: list[str]) -> tuple[Category, float, str]:
     """Возвращает (категория, уверенность 0-100, объяснение) по всем сообщениям пользователя."""
     numbered = "\n".join(f"{i + 1}. {m}" for i, m in enumerate(messages[-settings.context_messages_count :]))
@@ -109,9 +113,9 @@ async def analyze_user(messages: list[str]) -> tuple[Category, float, str]:
         category = Category(data.get("category", "undefined"))
         confidence = max(0.0, min(100.0, float(data.get("confidence", 0))))
         reason = str(data.get("reason", ""))
-    except Exception:
-        logger.exception("AI analysis failed, falling back to undefined")
-        return Category.UNDEFINED, 0.0, "ai_error"
+    except Exception as e:
+        logger.exception("AI analysis failed")
+        raise AIUnavailableError from e
 
     if len(messages) < settings.min_messages_for_category and confidence > 60:
         confidence = 60.0

@@ -106,6 +106,59 @@ async def test_ai():
     check("ИИ: банковская группа НЕ релевантна", rel2 is False, rr2)
 
 
+async def test_logic_hardening():
+    """Проверки логики: очередь отложенного ИИ-анализа, реконсиляция pending-чатов, last_message_id."""
+    from app.db.database import SessionMaker
+    from app.db.models import ChatStatus, MonitoredChat
+    from app.services import daily_limit, repository
+
+    await daily_limit.queue_failed_analysis(777)
+    await daily_limit.queue_failed_analysis(777)  # дубль
+    await daily_limit.queue_failed_analysis(888)
+    popped = sorted(await daily_limit.pop_failed_analyses())
+    popped_again = await daily_limit.pop_failed_analyses()
+    check("Логика: отложенный ИИ-анализ (очередь без дублей, атомарный pop)",
+          popped == [777, 888] and popped_again == [])
+
+    async with SessionMaker() as s:
+        await repository.upsert_chat(s, 42001, "Фейковая запись по ссылке", "dogclub", ChatStatus.PENDING_ACCESS, reason="Нет доступа")
+        await repository.upsert_chat(s, -100999, "Клуб собаководов", "dogclub", ChatStatus.ACTIVE)
+        await repository.remove_pending_duplicates(s, "dogclub", -100999)
+        await s.commit()
+        rows = (await s.execute(__import__("sqlalchemy").select(MonitoredChat).where(MonitoredChat.username == "dogclub"))).scalars().all()
+    check("Логика: реконсиляция pending после ручного вступления",
+          len(rows) == 1 and rows[0].chat_id == -100999 and rows[0].status == ChatStatus.ACTIVE)
+
+    async with SessionMaker() as s:
+        await repository.set_last_message_id(s, -100999, 500)
+        await repository.set_last_message_id(s, -100999, 300)  # назад не откатываемся
+        await s.commit()
+        chat = await s.get(MonitoredChat, -100999)
+    check("Логика: last_message_id монотонно растёт (для догона после простоя)", chat.last_message_id == 500)
+
+    from app.services.ai_analyzer import AIUnavailableError, analyze_user
+
+    saved = None
+    try:
+        import app.services.ai_analyzer as aa
+        saved = aa._call_llm_with_system
+
+        async def _boom(system, prompt):
+            raise RuntimeError("ai down")
+
+        aa._call_llm_with_system = _boom
+        raised = False
+        try:
+            await analyze_user(["мой пёс"])
+        except AIUnavailableError:
+            raised = True
+        check("Логика: сбой ИИ не перезаписывает категорию (AIUnavailableError)", raised)
+    finally:
+        if saved:
+            import app.services.ai_analyzer as aa
+            aa._call_llm_with_system = saved
+
+
 async def test_telegram_connect():
     from telethon import TelegramClient
 
@@ -142,6 +195,7 @@ async def main():
     await test_daily_limit()
     await test_exporter()
     await test_admin_panel()
+    await test_logic_hardening()
     await test_telegram_connect()
     await test_ai()
     failed = [r for r in results if r[0] == FAIL]

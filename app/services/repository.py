@@ -1,7 +1,7 @@
 """Работа с БД: upsert пользователей (ключ user_id), история сообщений, поиск, статистика."""
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -98,6 +98,23 @@ async def upsert_chat(
               "reason": stmt.excluded.reason},
     )
     await session.execute(stmt)
+
+
+async def remove_pending_duplicates(session: AsyncSession, username: str, keep_chat_id: int) -> None:
+    """Удаляет устаревшие PENDING-записи с тем же username после появления реального чата."""
+    await session.execute(
+        delete(MonitoredChat).where(
+            MonitoredChat.username == username,
+            MonitoredChat.chat_id != keep_chat_id,
+            MonitoredChat.status == ChatStatus.PENDING_ACCESS,
+        )
+    )
+
+
+async def set_last_message_id(session: AsyncSession, chat_id: int, last_message_id: int) -> None:
+    chat = await session.get(MonitoredChat, chat_id)
+    if chat and last_message_id > (chat.last_message_id or 0):
+        chat.last_message_id = last_message_id
 
 
 async def log_event(session: AsyncSession, event_type: str, detail: str) -> None:

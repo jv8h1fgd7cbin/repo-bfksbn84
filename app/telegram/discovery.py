@@ -20,6 +20,7 @@ from telethon.errors import (
 from telethon.tl.functions.channels import GetFullChannelRequest, JoinChannelRequest
 from telethon.tl.functions.contacts import SearchRequest
 from telethon.tl.types import Channel
+from telethon.utils import get_peer_id
 
 from app.config import settings
 from app.db.database import SessionMaker
@@ -65,24 +66,34 @@ class Discovery:
                 continue
 
             username = getattr(group, "username", None)
-            identifier = username or str(group.id)
+            peer_id = get_peer_id(group)  # маркированный id (-100…), как в iter_dialogs
+            identifier = username or str(peer_id)
+            title = getattr(group, "title", identifier)
             if await daily_limit.is_discovered_chat(identifier):
                 continue
-            await daily_limit.mark_discovered_chat(identifier)
 
             if await daily_limit.joins_today() >= settings.max_joins_per_day:
                 return
 
             # ИИ проверяет по образцу сообщений, что группа реально про питомцев
             relevant, reason = await self._check_relevance(group)
+            if reason == "cannot_read":
+                # публичного доступа к сообщениям нет — просим админа вступить вручную
+                await self._queue_no_access(peer_id, title, username, "Нет доступа")
+                await daily_limit.mark_discovered_chat(identifier)
+                continue
             if not relevant:
-                logger.info("Skip %s — не про питомцев: %s", getattr(group, "title", identifier), reason)
+                logger.info("Skip %s — не про питомцев: %s", title, reason)
+                await daily_limit.mark_discovered_chat(identifier)
                 continue
 
-            await self._join_chat(group, identifier)
-            delay = random.randint(settings.join_delay_min_seconds, settings.join_delay_max_seconds)
-            logger.info("Waiting %ss before next join (rate limit)", delay)
-            await asyncio.sleep(delay)
+            joined = await self._join_chat(group, identifier)
+            if joined:
+                # помечаем обработанным только при терминальном исходе (не при FloodWait)
+                await daily_limit.mark_discovered_chat(identifier)
+                delay = random.randint(settings.join_delay_min_seconds, settings.join_delay_max_seconds)
+                logger.info("Waiting %ss before next join (rate limit)", delay)
+                await asyncio.sleep(delay)
 
     async def _check_relevance(self, group: Channel) -> tuple[bool, str]:
         """Читает последние сообщения публичной группы и спрашивает ИИ о релевантности."""
@@ -114,34 +125,43 @@ class Discovery:
                 return c
         return None
 
-    async def _join_chat(self, chat: Channel, identifier: str) -> None:
+    async def _join_chat(self, chat: Channel, identifier: str) -> bool:
+        """Вступает в группу. Возвращает True при терминальном исходе (успех/очередь/лимит),
+        False — если исход временный (FloodWait) и группу стоит повторить позже."""
         title = getattr(chat, "title", identifier)
         username = getattr(chat, "username", None)
+        peer_id = get_peer_id(chat)
         try:
             await self.client(JoinChannelRequest(chat))
             await daily_limit.incr_joins()
             async with SessionMaker() as session:
                 await repository.upsert_chat(
-                    session, chat.id, title, username, ChatStatus.ACTIVE
+                    session, peer_id, title, username, ChatStatus.ACTIVE
                 )
                 await session.commit()
             logger.info("Auto-joined group %s (@%s)", title, username)
+            return True
         except FloodWaitError as e:
             logger.warning("FloodWait on join %s: %ss", title, e.seconds)
             await self._log("floodwait", f"join {title}: {e.seconds}s")
             await asyncio.sleep(e.seconds + 1)
+            return False
         except (ChannelPrivateError, InviteRequestSentError):
-            await self._queue_no_access(chat.id, title, username, "Нет доступа")
+            await self._queue_no_access(peer_id, title, username, "Нет доступа")
+            return True
         except UserAlreadyParticipantError:
             async with SessionMaker() as session:
-                await repository.upsert_chat(session, chat.id, title, username, ChatStatus.ACTIVE)
+                await repository.upsert_chat(session, peer_id, title, username, ChatStatus.ACTIVE)
                 await session.commit()
+            return True
         except ChannelsTooMuchError:
             logger.error("Account is in too many channels, cannot join more")
             await self._log("error", "too many channels: cannot auto-join")
+            return True
         except Exception:
             logger.exception("Failed to join %s", title)
-            await self._queue_no_access(chat.id, title, username, "Ошибка вступления")
+            await self._queue_no_access(peer_id, title, username, "Ошибка вступления")
+            return True
 
     async def _queue_no_access(self, chat_id: int, title: str, username: str | None, reason: str) -> None:
         async with SessionMaker() as session:

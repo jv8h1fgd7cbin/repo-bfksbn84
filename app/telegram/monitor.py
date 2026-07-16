@@ -11,7 +11,7 @@ from app.config import settings
 from app.db.database import SessionMaker
 from app.db.models import ChatStatus, MonitoredChat
 from app.services import daily_limit, repository
-from app.services.ai_analyzer import analyze_user, looks_pet_related
+from app.services.ai_analyzer import AIUnavailableError, analyze_user, looks_pet_related
 from app.telegram.discovery import Discovery
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,8 @@ class PetFinderMonitor:
         )
         self._analyze_lock = asyncio.Lock()
         self._discovery = Discovery(self.client, self._notify_admin, self._log)
+        self._periodic_task: asyncio.Task | None = None
+        self._discovery_task: asyncio.Task | None = None
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -39,9 +41,8 @@ class PetFinderMonitor:
                 self.client.add_event_handler(self._on_new_message, events.NewMessage(incoming=True))
                 await self._sync_dialogs()
                 await self._backfill_all()
-                asyncio.create_task(self._periodic_tasks())
-                if settings.discovery_enabled:
-                    asyncio.create_task(self._discovery_loop())
+                await self._catch_up_all()  # сообщения, пропущенные за время простоя
+                self._ensure_background_tasks()
                 await self.client.run_until_disconnected()
             except FloodWaitError as e:
                 await self._log("floodwait", f"global floodwait {e.seconds}s")
@@ -50,6 +51,13 @@ class PetFinderMonitor:
                 logger.exception("Monitor crashed, restarting in 15s")
                 await self._log("error", "monitor crash, restart")
                 await asyncio.sleep(15)
+
+    def _ensure_background_tasks(self) -> None:
+        """Запускает фоновые циклы один раз, не плодя дубли при реконнектах."""
+        if self._periodic_task is None or self._periodic_task.done():
+            self._periodic_task = asyncio.create_task(self._periodic_tasks())
+        if settings.discovery_enabled and (self._discovery_task is None or self._discovery_task.done()):
+            self._discovery_task = asyncio.create_task(self._discovery_loop())
 
     async def _discovery_loop(self) -> None:
         """Периодический авто-поиск и авто-вступление в публичные группы."""
@@ -73,6 +81,8 @@ class PetFinderMonitor:
                 await self._sync_dialogs()
                 await self._check_pending_chats()
                 await self._backfill_all()
+                await self._catch_up_all()
+                await self._retry_failed_analyses()
             except FloodWaitError as e:
                 await self._log("floodwait", f"periodic floodwait {e.seconds}s")
                 await asyncio.sleep(e.seconds)
@@ -89,14 +99,18 @@ class PetFinderMonitor:
             is_group = isinstance(entity, Chat) or (isinstance(entity, Channel) and entity.megagroup)
             if not is_group:
                 continue
+            username = getattr(entity, "username", None)
             async with SessionMaker() as session:
                 await repository.upsert_chat(
                     session,
                     chat_id=dialog.id,
                     title=dialog.name,
-                    username=getattr(entity, "username", None),
+                    username=username,
                     status=ChatStatus.ACTIVE,
                 )
+                if username:
+                    # чат из очереди «Нет доступа» появился в диалогах — убираем устаревшую запись
+                    await repository.remove_pending_duplicates(session, username, dialog.id)
                 await session.commit()
 
     async def _check_pending_chats(self) -> None:
@@ -129,6 +143,9 @@ class PetFinderMonitor:
 
     async def handle_discovered_chat(self, identifier: str) -> None:
         """Обнаружен новый чат (например, ссылка в сообщении). Никогда не вступаем сами."""
+        if await daily_limit.is_discovered_chat(identifier):
+            return  # уже обрабатывали эту ссылку — не дёргаем Telegram и не спамим админа
+        await daily_limit.mark_discovered_chat(identifier)
         try:
             entity = await self.client.get_entity(identifier)
             await self.client.get_messages(entity, limit=1)
@@ -177,9 +194,12 @@ class PetFinderMonitor:
     async def _backfill_chat(self, chat: MonitoredChat) -> None:
         logger.info("Backfilling %s", chat.title)
         max_id = 0
+        touched: set[int] = set()
         async for message in self.client.iter_messages(chat.chat_id, limit=settings.history_backfill_limit):
             if isinstance(message, Message) and message.text:
-                await self._process_message(message, chat.chat_id, chat.title)
+                user_id = await self._process_message(message, chat.chat_id, chat.title, analyze=False)
+                if user_id:
+                    touched.add(user_id)
             max_id = max(max_id, message.id)
         async with SessionMaker() as session:
             db_chat = await session.get(MonitoredChat, chat.chat_id)
@@ -187,7 +207,46 @@ class PetFinderMonitor:
                 db_chat.backfilled = True
                 db_chat.last_message_id = max_id
             await session.commit()
-        logger.info("Backfill done for %s", chat.title)
+        # ИИ-анализ один раз на пользователя по всей его истории (а не на каждое сообщение)
+        for user_id in touched:
+            await self._reanalyze_user(user_id)
+        logger.info("Backfill done for %s (%d users analyzed)", chat.title, len(touched))
+
+    async def _catch_up_all(self) -> None:
+        """Догоняет сообщения, пришедшие за время простоя (после last_message_id)."""
+        from sqlalchemy import select
+
+        async with SessionMaker() as session:
+            rows = await session.execute(
+                select(MonitoredChat).where(
+                    MonitoredChat.status == ChatStatus.ACTIVE, MonitoredChat.backfilled.is_(True)
+                )
+            )
+            chats = list(rows.scalars())
+        for chat in chats:
+            try:
+                await self._catch_up_chat(chat)
+            except FloodWaitError as e:
+                await self._log("floodwait", f"catch-up {chat.title}: {e.seconds}s")
+                await asyncio.sleep(e.seconds + 1)
+            except Exception:
+                logger.exception("Catch-up failed for %s", chat.title)
+
+    async def _catch_up_chat(self, chat: MonitoredChat) -> None:
+        max_id = chat.last_message_id or 0
+        touched: set[int] = set()
+        async for message in self.client.iter_messages(chat.chat_id, min_id=chat.last_message_id or 0):
+            if isinstance(message, Message) and message.text:
+                user_id = await self._process_message(message, chat.chat_id, chat.title, analyze=False)
+                if user_id:
+                    touched.add(user_id)
+            max_id = max(max_id, message.id)
+        if max_id > (chat.last_message_id or 0):
+            async with SessionMaker() as session:
+                await repository.set_last_message_id(session, chat.chat_id, max_id)
+                await session.commit()
+        for user_id in touched:
+            await self._reanalyze_user(user_id)
 
     # ---------------------------------------------------------------- realtime
 
@@ -206,13 +265,16 @@ class PetFinderMonitor:
 
     # ---------------------------------------------------------------- processing
 
-    async def _process_message(self, message: Message, chat_id: int, chat_name: str | None) -> None:
+    async def _process_message(
+        self, message: Message, chat_id: int, chat_name: str | None, analyze: bool = True
+    ) -> int | None:
+        """Обрабатывает сообщение; возвращает user_id, если сохранено новое pet-сообщение."""
         text = message.text
         if not text:
-            return
+            return None
         sender = await message.get_sender()
         if not isinstance(sender, User) or sender.bot:
-            return
+            return None
         await daily_limit.incr_processed()
 
         for match in TME_LINK_RE.finditer(text):
@@ -222,13 +284,13 @@ class PetFinderMonitor:
                 asyncio.create_task(self.handle_discovered_chat(candidate))
 
         if not looks_pet_related(text):
-            return
+            return None
 
         is_known = await daily_limit.is_known_user(sender.id)
         if not is_known:
             if not await daily_limit.try_register_new_user(sender.id):
                 logger.debug("Daily new-user limit reached, skipping user %s", sender.id)
-                return
+                return None
             await daily_limit.mark_known_user(sender.id)
 
         async with SessionMaker() as session:
@@ -239,8 +301,11 @@ class PetFinderMonitor:
                 session, sender.id, chat_id, chat_name, message.id, message.date, text
             )
             await session.commit()
-        if is_new_message:
+        if not is_new_message:
+            return None
+        if analyze:
             await self._reanalyze_user(sender.id)
+        return sender.id
 
     async def _reanalyze_user(self, user_id: int) -> None:
         """ИИ пересматривает категорию по всей истории сообщений пользователя."""
@@ -249,13 +314,24 @@ class PetFinderMonitor:
                 messages = await repository.get_user_messages(session, user_id)
             if not messages:
                 return
-            category, confidence, reason = await analyze_user(messages)
+            try:
+                category, confidence, reason = await analyze_user(messages)
+            except AIUnavailableError:
+                # ИИ временно недоступен: не трогаем текущую категорию, повторим позже
+                await daily_limit.queue_failed_analysis(user_id)
+                await self._log("error", f"AI unavailable, analysis of {user_id} deferred")
+                return
             async with SessionMaker() as session:
                 await repository.update_category(session, user_id, category, confidence)
                 await session.commit()
             logger.info(
                 "User %s -> %s (%.0f%%): %s", user_id, category.value, confidence, reason
             )
+
+    async def _retry_failed_analyses(self) -> None:
+        """Повторяет ИИ-анализ пользователей, отложенный из-за сбоя ИИ."""
+        for user_id in await daily_limit.pop_failed_analyses():
+            await self._reanalyze_user(user_id)
 
     # ---------------------------------------------------------------- helpers
 

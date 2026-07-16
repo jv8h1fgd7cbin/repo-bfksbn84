@@ -60,9 +60,23 @@ async def mark_discovered_chat(identifier: str) -> None:
     await _redis.sadd("discovered_chats", identifier)
 
 
+async def queue_failed_analysis(user_id: int) -> None:
+    """Откладывает пользователя для повторного ИИ-анализа после сбоя ИИ."""
+    await _redis.sadd("failed_analyses", user_id)
+
+
+async def pop_failed_analyses() -> list[int]:
+    """Возвращает и очищает отложенных пользователей (атомарно)."""
+    members = await _redis.smembers("failed_analyses")
+    if members:
+        await _redis.delete("failed_analyses")
+    return [int(m) for m in members]
+
+
 async def incr_processed() -> None:
-    await _redis.incr(f"processed:{datetime.now(timezone.utc):%Y-%m-%d-%H}")
-    await _redis.expire(f"processed:{datetime.now(timezone.utc):%Y-%m-%d-%H}", 60 * 60 * 25)
+    key = f"processed:{datetime.now(timezone.utc):%Y-%m-%d-%H}"
+    await _redis.incr(key)
+    await _redis.expire(key, 60 * 60 * 25)
 
 
 async def processed_last_hour() -> int:
