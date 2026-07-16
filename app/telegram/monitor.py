@@ -16,6 +16,7 @@ from app.services.ai_analyzer import analyze_user, looks_pet_related
 logger = logging.getLogger(__name__)
 
 TME_LINK_RE = re.compile(r"(?:https?://)?t\.me/(joinchat/|\+)?([\w-]+)")
+TME_RESERVED_PATHS = {"c", "s", "iv", "share", "proxy", "socks", "addstickers", "addemoji", "addtheme", "setlanguage", "joinchat"}
 
 
 class PetFinderMonitor:
@@ -193,8 +194,10 @@ class PetFinderMonitor:
         await daily_limit.incr_processed()
 
         for match in TME_LINK_RE.finditer(text):
-            if not match.group(1):  # публичный username, не invite-ссылка
-                asyncio.create_task(self.handle_discovered_chat(match.group(2)))
+            candidate = match.group(2)
+            # только публичные username (не invite-ссылки и не служебные пути t.me)
+            if not match.group(1) and candidate.lower() not in TME_RESERVED_PATHS and len(candidate) >= 5:
+                asyncio.create_task(self.handle_discovered_chat(candidate))
 
         if not looks_pet_related(text):
             return
