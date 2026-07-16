@@ -12,6 +12,7 @@ from app.db.database import SessionMaker
 from app.db.models import ChatStatus, MonitoredChat
 from app.services import daily_limit, repository
 from app.services.ai_analyzer import analyze_user, looks_pet_related
+from app.telegram.discovery import Discovery
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class PetFinderMonitor:
             settings.telegram_session_name, settings.telegram_api_id, settings.telegram_api_hash
         )
         self._analyze_lock = asyncio.Lock()
+        self._discovery = Discovery(self.client, self._notify_admin, self._log)
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -38,6 +40,8 @@ class PetFinderMonitor:
                 await self._sync_dialogs()
                 await self._backfill_all()
                 asyncio.create_task(self._periodic_tasks())
+                if settings.discovery_enabled:
+                    asyncio.create_task(self._discovery_loop())
                 await self.client.run_until_disconnected()
             except FloodWaitError as e:
                 await self._log("floodwait", f"global floodwait {e.seconds}s")
@@ -46,6 +50,21 @@ class PetFinderMonitor:
                 logger.exception("Monitor crashed, restarting in 15s")
                 await self._log("error", "monitor crash, restart")
                 await asyncio.sleep(15)
+
+    async def _discovery_loop(self) -> None:
+        """Периодический авто-поиск и авто-вступление в публичные группы."""
+        while True:
+            try:
+                await self._discovery.run_once()
+                await self._sync_dialogs()
+                await self._backfill_all()
+            except FloodWaitError as e:
+                await self._log("floodwait", f"discovery loop floodwait {e.seconds}s")
+                await asyncio.sleep(e.seconds)
+            except Exception:
+                logger.exception("Discovery loop failed")
+                await self._log("error", "discovery loop failed")
+            await asyncio.sleep(settings.discovery_interval_seconds)
 
     async def _periodic_tasks(self) -> None:
         while True:
@@ -102,7 +121,10 @@ class PetFinderMonitor:
                         )
                         await session.commit()
                     logger.info("Access gained to %s, will index", chat.title)
-            except (ChannelPrivateError, ChatAdminRequiredError, InviteHashInvalidError, ValueError):
+            except FloodWaitError:
+                raise
+            except Exception:
+                # чат всё ещё недоступен (приватный, несуществующий username и т.п.) — ждём дальше
                 continue
 
     async def handle_discovered_chat(self, identifier: str) -> None:

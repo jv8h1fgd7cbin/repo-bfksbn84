@@ -31,6 +31,23 @@ class Settings(BaseSettings):
     context_messages_count: int = 10
     dialogs_refresh_seconds: int = 300
 
+    # Авто-поиск и авто-вступление в публичные группы
+    discovery_enabled: bool = False
+    discovery_keywords: str = (
+        "собаки,собака,собаководы,щенки,щенок,питомник собак,кинолог,дрессировка собак,"
+        "кошки,кошка,котята,котёнок,кошатники,котолюбы,котомания,"
+        "домашние животные,питомцы,питомец,зоомагазин,зоотовары,корм для животных,"
+        "ветеринар,ветклиника,ветеринария,груминг,передержка,"
+        "приют животных,приют для собак,приют для кошек,волонтёры животные,пристройство животных,"
+        "лабрадор,овчарка,хаски,корги,шпиц,такса,чихуахуа,йорк,мопс,бульдог,"
+        "мейн-кун,британская кошка,шотландская кошка,сфинкс,бенгальская кошка,вислоухие"
+    )
+    discovery_interval_seconds: int = 1800  # как часто искать новые группы
+    max_joins_per_day: int = 20  # консервативный лимит вступлений в сутки
+    join_delay_min_seconds: int = 180  # минимальная пауза между вступлениями
+    join_delay_max_seconds: int = 300  # максимальная пауза между вступлениями
+    relevance_sample_size: int = 40  # сколько сообщений группы читать для ИИ-проверки релевантности
+
     admin_panel_host: str = "0.0.0.0"
     admin_panel_port: int = 8080
 
@@ -46,6 +63,10 @@ class Settings(BaseSettings):
     @property
     def redis_url(self) -> str:
         return f"redis://{self.redis_host}:{self.redis_port}/0"
+
+    @property
+    def discovery_keyword_list(self) -> list[str]:
+        return [k.strip() for k in self.discovery_keywords.split(",") if k.strip()]
 
 
 settings = Settings()

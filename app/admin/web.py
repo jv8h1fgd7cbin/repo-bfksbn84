@@ -26,6 +26,7 @@ async def dashboard(request: Request):
         stats = await repository.dashboard_stats(session)
     stats["new_today"] = await daily_limit.new_users_today()
     stats["processed_last_hour"] = await daily_limit.processed_last_hour()
+    stats["joins_today"] = await daily_limit.joins_today()
     return templates.TemplateResponse(request, "dashboard.html", {"stats": stats})
 
 
@@ -35,6 +36,7 @@ async def api_stats():
         stats = await repository.dashboard_stats(session)
     stats["new_today"] = await daily_limit.new_users_today()
     stats["processed_last_hour"] = await daily_limit.processed_last_hour()
+    stats["joins_today"] = await daily_limit.joins_today()
     return stats
 
 

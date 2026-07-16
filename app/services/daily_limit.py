@@ -40,6 +40,26 @@ async def mark_known_user(user_id: int) -> None:
     await _redis.sadd("known_users", user_id)
 
 
+async def joins_today() -> int:
+    val = await _redis.get(f"joins:{datetime.now(timezone.utc):%Y-%m-%d}")
+    return int(val or 0)
+
+
+async def incr_joins() -> None:
+    key = f"joins:{datetime.now(timezone.utc):%Y-%m-%d}"
+    await _redis.incr(key)
+    await _redis.expire(key, 60 * 60 * 48)
+
+
+async def is_discovered_chat(identifier: str) -> bool:
+    """Уже обрабатывали этот чат в авто-поиске (чтобы не дёргать повторно)."""
+    return bool(await _redis.sismember("discovered_chats", identifier))
+
+
+async def mark_discovered_chat(identifier: str) -> None:
+    await _redis.sadd("discovered_chats", identifier)
+
+
 async def incr_processed() -> None:
     await _redis.incr(f"processed:{datetime.now(timezone.utc):%Y-%m-%d-%H}")
     await _redis.expire(f"processed:{datetime.now(timezone.utc):%Y-%m-%d-%H}", 60 * 60 * 25)

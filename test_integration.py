@@ -92,6 +92,19 @@ async def test_ai():
     cat4, conf4, r4 = await analyze_user(["кот"])
     check("ИИ: одно слово не даёт высокой уверенности", conf4 <= 60, f"{cat4.value} {conf4}% ({r4})")
 
+    from app.services.ai_analyzer import is_relevant_group
+
+    rel, rr = await is_relevant_group([
+        "Подскажите, чем кормить щенка лабрадора?", "Моя кошка не ест сухой корм",
+        "Кто ходил к ветеринару на Ленина?", "Продаю когтеточку", "У нас родились котята",
+    ])
+    check("ИИ: группа про питомцев релевантна", rel is True, rr)
+    rel2, rr2 = await is_relevant_group([
+        "Курс доллара сегодня вырос", "Кто торгует на бирже?", "Обсуждаем ипотеку и вклады",
+        "Лучшие банки Казахстана", "SWIFT переводы за рубеж",
+    ])
+    check("ИИ: банковская группа НЕ релевантна", rel2 is False, rr2)
+
 
 async def test_telegram_connect():
     from telethon import TelegramClient
