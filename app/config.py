@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     telegram_session_name: str = "pet_finder"
     admin_user_id: int = 0
 
+    # Доступ к админ-панели: вход через Telegram (кука сессии); секрет для подписи куки
+    admin_auth_enabled: bool = True
+    admin_secret: str = ""
+
     ai_provider: str = "openai"  # openai | anthropic
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"

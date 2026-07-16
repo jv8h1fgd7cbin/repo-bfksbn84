@@ -159,6 +159,30 @@ async def test_logic_hardening():
             aa._call_llm_with_system = saved
 
 
+async def test_admin_auth():
+    import httpx
+    from httpx import ASGITransport
+
+    from app.admin import web
+    from app.admin.web import app
+    from app.config import settings
+
+    settings.admin_auth_enabled = True
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", follow_redirects=False) as c:
+        r_guest = await c.get("/")
+        r_api = await c.get("/api/stats")
+        r_login = await c.get("/login")
+        r_ok = await c.get("/", cookies={web.COOKIE_NAME: web._make_cookie()})
+        r_bad = await c.get("/", cookies={web.COOKIE_NAME: "wrong"})
+    check("Доступ: без входа дашборд редиректит на /login", r_guest.status_code in (302, 307))
+    check("Доступ: API без входа -> 401", r_api.status_code == 401)
+    check("Доступ: страница /login открыта", r_login.status_code == 200)
+    check("Доступ: валидная кука пускает в панель", r_ok.status_code == 200)
+    check("Доступ: неверная кука отклонена", r_bad.status_code in (302, 307))
+    settings.admin_auth_enabled = False
+
+
 async def test_telegram_connect():
     from telethon import TelegramClient
 
@@ -176,7 +200,9 @@ async def test_admin_panel():
     from httpx import ASGITransport
 
     from app.admin.web import app
+    from app.config import settings
 
+    settings.admin_auth_enabled = False  # тестируем панель без Telegram-входа
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         r1 = await c.get("/")
@@ -196,6 +222,7 @@ async def main():
     await test_exporter()
     await test_admin_panel()
     await test_logic_hardening()
+    await test_admin_auth()
     await test_telegram_connect()
     await test_ai()
     failed = [r for r in results if r[0] == FAIL]

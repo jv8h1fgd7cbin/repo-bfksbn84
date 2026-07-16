@@ -7,7 +7,7 @@ import uvicorn
 from app.admin.web import app as admin_app
 from app.config import settings
 from app.db.database import init_db
-from app.telegram.monitor import PetFinderMonitor
+from app.telegram.manager import manager
 
 logging.basicConfig(
     level=settings.log_level,
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     await init_db()
-    monitor = PetFinderMonitor()
+    await manager.start_all()  # поднимает мониторы всех авторизованных аккаунтов
     server = uvicorn.Server(
         uvicorn.Config(
             admin_app,
@@ -27,7 +27,7 @@ async def main() -> None:
             log_level=settings.log_level.lower(),
         )
     )
-    await asyncio.gather(monitor.run(), server.serve())
+    await server.serve()
 
 
 if __name__ == "__main__":

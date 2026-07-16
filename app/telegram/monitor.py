@@ -27,10 +27,13 @@ TME_RESERVED_PATHS = {"c", "s", "iv", "share", "proxy", "socks", "addstickers", 
 
 
 class PetFinderMonitor:
-    def __init__(self) -> None:
-        self.client = TelegramClient(
+    def __init__(self, client: TelegramClient | None = None, label: str | None = None) -> None:
+        # client передаётся менеджером аккаунтов (уже авторизован); иначе — одиночный режим
+        self.client = client or TelegramClient(
             settings.telegram_session_name, settings.telegram_api_id, settings.telegram_api_hash
         )
+        self.label = label or settings.telegram_session_name
+        self._external_client = client is not None
         self._analyze_lock = asyncio.Lock()
         self._discovery = Discovery(self.client, self._notify_admin, self._log)
         self._periodic_task: asyncio.Task | None = None
@@ -42,8 +45,12 @@ class PetFinderMonitor:
         """Основной цикл с автоматическим восстановлением после сбоев."""
         while True:
             try:
-                await self.client.start()
-                logger.info("Telegram client started")
+                if self._external_client:
+                    if not self.client.is_connected():
+                        await self.client.connect()
+                else:
+                    await self.client.start()
+                logger.info("Telegram client started (%s)", self.label)
                 self.client.add_event_handler(self._on_new_message, events.NewMessage(incoming=True))
                 await self._sync_dialogs()
                 await self._backfill_all()
@@ -57,6 +64,16 @@ class PetFinderMonitor:
                 logger.exception("Monitor crashed, restarting in 15s")
                 await self._log("error", "monitor crash, restart")
                 await asyncio.sleep(15)
+
+    async def stop(self) -> None:
+        """Останавливает фоновые задачи и отключает клиента (для удаления аккаунта)."""
+        for task in (self._periodic_task, self._discovery_task):
+            if task and not task.done():
+                task.cancel()
+        try:
+            await self.client.disconnect()
+        except Exception:
+            logger.exception("Error disconnecting %s", self.label)
 
     def _ensure_background_tasks(self) -> None:
         """Запускает фоновые циклы один раз, не плодя дубли при реконнектах."""

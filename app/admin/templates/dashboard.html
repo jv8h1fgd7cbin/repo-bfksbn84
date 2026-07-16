@@ -65,7 +65,8 @@
   <header>
     <h1>🐾 Pet Owner Finder — админ-панель</h1>
     <div class="meta">
-      Статус аккаунта: <b id="acct">✅ активен</b> · обновлено <span id="updated">—</span>
+      Аккаунт: <b id="acct">—</b> · обновлено <span id="updated">—</span>
+      <a href="#" onclick="logout();return false" style="color:#fff;margin-left:16px;text-decoration:none">Выйти из аккаунта</a>
     </div>
   </header>
 
@@ -135,8 +136,18 @@
       set("s_undef", s.undefined); set("s_new", s.new_today); set("s_total", s.total_users);
       set("s_active", s.chats_active); set("s_pending", s.chats_pending); set("s_joins", s.joins_today);
       set("s_speed", s.processed_last_hour); set("s_err", s.errors_24h); set("s_flood", s.floodwait_24h);
-      document.getElementById("acct").textContent = s.errors_24h > 20 ? "⚠️ проверьте логи" : "✅ активен";
       document.getElementById("updated").textContent = new Date().toLocaleTimeString("ru-RU");
+    }
+
+    async function loadAccount() {
+      try {
+        const a = await (await fetch("/api/account")).json();
+        const el = document.getElementById("acct");
+        if (a.logged_in) {
+          const label = a.name || (a.username ? "@" + a.username : a.user_id);
+          el.textContent = (a.running ? "✅ " : "⏸ ") + label;
+        } else { el.textContent = "⚠️ не в сети"; }
+      } catch (e) {}
     }
 
     function badge(cat) { return `<span class="badge b-${cat}">${CAT_LABEL[cat] || cat}</span>`; }
@@ -200,7 +211,11 @@
           <a href="/api/export/${c}/json">JSON</a></div>`).join("");
     }
 
-    function refreshAll() { loadStats(); loadChats(); }
+    async function logout() {
+      if (!confirm("Выйти из аккаунта? Мониторинг остановится, потребуется повторный вход через Telegram.")) return;
+      await fetch("/api/account/logout", {method: "POST"}); location.href = "/login";
+    }
+    function refreshAll() { loadStats(); loadChats(); loadAccount(); }
     buildExports(); refreshAll(); doSearch();
     setInterval(refreshAll, 15000);
   </script>

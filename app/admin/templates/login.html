@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход — Pet Owner Finder</title>
+  <style>
+    :root { --brand:#4f46e5; --ink:#1f2430; --muted:#6b7280; --line:#e6e9f0; --err:#dc2626; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#f4f6fb;
+           color:var(--ink); margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; }
+    .box { background:#fff; border:1px solid var(--line); border-radius:16px; padding:32px;
+           width:420px; max-width:92vw; box-shadow:0 8px 30px rgba(0,0,0,.06); }
+    h1 { margin:0 0 4px; font-size:22px; }
+    .sub { color:var(--muted); font-size:14px; margin-bottom:20px; }
+    .tabs { display:flex; gap:8px; margin-bottom:18px; }
+    .tab { flex:1; padding:9px; text-align:center; border:1px solid var(--line); border-radius:9px;
+           cursor:pointer; font-weight:600; font-size:14px; background:#fff; }
+    .tab.active { background:var(--brand); color:#fff; border-color:var(--brand); }
+    .pane { display:none; } .pane.active { display:block; }
+    label { display:block; font-size:13px; color:var(--muted); margin:12px 0 4px; }
+    input { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:9px; font-size:15px; }
+    button { width:100%; margin-top:16px; padding:11px; border:none; border-radius:9px; background:var(--brand);
+             color:#fff; font-weight:600; font-size:15px; cursor:pointer; }
+    button:disabled { opacity:.5; cursor:default; }
+    .qr { text-align:center; padding:10px; }
+    .qr svg { width:230px; height:230px; }
+    .hint { font-size:13px; color:var(--muted); margin-top:12px; line-height:1.5; }
+    .status { margin-top:12px; font-size:14px; }
+    .status.err { color:var(--err); }
+    .status.ok { color:#16a34a; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>🐾 Вход в панель</h1>
+    <div class="sub">Войдите через Telegram — этим же аккаунтом система начнёт мониторинг.</div>
+
+    <div class="tabs">
+      <div class="tab active" id="tab_qr" onclick="showTab('qr')">QR-код</div>
+      <div class="tab" id="tab_phone" onclick="showTab('phone')">Телефон</div>
+    </div>
+
+    <div class="pane active" id="pane_qr">
+      <div class="qr" id="qrbox"><span class="hint">Загрузка QR…</span></div>
+      <div class="hint">В приложении Telegram: <b>Настройки → Устройства → Подключить устройство</b> — отсканируйте код. Код обновляется автоматически.</div>
+      <div class="status" id="qr_status"></div>
+      <div id="qr_pwd" style="display:none">
+        <label>Пароль двухэтапной проверки (2FA)</label>
+        <input id="qr_password" type="password" placeholder="облачный пароль">
+        <button onclick="submitQrPassword()">Подтвердить пароль</button>
+      </div>
+    </div>
+
+    <div class="pane" id="pane_phone">
+      <div id="phone_step1">
+        <label>Номер телефона (с кодом страны)</label>
+        <input id="phone" placeholder="+79991234567">
+        <button onclick="phoneStart()">Отправить код</button>
+      </div>
+      <div id="phone_step2" style="display:none">
+        <label>Код из Telegram</label>
+        <input id="phone_code" inputmode="numeric" placeholder="12345">
+        <button onclick="phoneCode()">Войти</button>
+      </div>
+      <div id="phone_step3" style="display:none">
+        <label>Пароль двухэтапной проверки (2FA)</label>
+        <input id="phone_password" type="password" placeholder="облачный пароль">
+        <button onclick="phonePassword()">Подтвердить пароль</button>
+      </div>
+      <div class="status" id="phone_status"></div>
+    </div>
+  </div>
+
+  <script>
+    let qrToken = null, qrPolling = false, phoneToken = null;
+
+    function showTab(t) {
+      document.getElementById("tab_qr").classList.toggle("active", t === "qr");
+      document.getElementById("tab_phone").classList.toggle("active", t === "phone");
+      document.getElementById("pane_qr").classList.toggle("active", t === "qr");
+      document.getElementById("pane_phone").classList.toggle("active", t === "phone");
+      if (t === "qr" && !qrToken) startQr();
+    }
+
+    function renderQr(url) {
+      document.getElementById("qrbox").innerHTML =
+        `<img src="/api/auth/qr/image?url=${encodeURIComponent(url)}" alt="QR" style="width:230px;height:230px">`;
+    }
+
+    async function startQr() {
+      const r = await (await fetch("/api/auth/qr/start", {method: "POST"})).json();
+      qrToken = r.token; renderQr(r.url);
+      if (!qrPolling) { qrPolling = true; pollQr(); }
+    }
+
+    async function pollQr() {
+      if (!qrToken) return;
+      try {
+        const r = await (await fetch("/api/auth/qr/poll?token=" + qrToken)).json();
+        if (r.status === "authorized") { location.href = "/"; return; }
+        if (r.status === "password") {
+          document.getElementById("qr_pwd").style.display = "block";
+          document.getElementById("qr_status").textContent = "Аккаунт защищён паролем — введите его.";
+        } else if (r.status === "waiting" && r.url) {
+          renderQr(r.url);
+        } else if (r.status === "unknown") { qrToken = null; startQr(); return; }
+      } catch (e) {}
+      setTimeout(pollQr, 2000);
+    }
+
+    async function submitQrPassword() {
+      const password = document.getElementById("qr_password").value;
+      const r = await (await fetch("/api/auth/phone/password", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({token: qrToken, password})
+      })).json();
+      if (r.status === "authorized") location.href = "/";
+      else document.getElementById("qr_status").className = "status err",
+           document.getElementById("qr_status").textContent = "Неверный пароль";
+    }
+
+    async function phoneStart() {
+      const phone = document.getElementById("phone").value.trim();
+      const st = document.getElementById("phone_status"); st.className = "status"; st.textContent = "Отправляю код…";
+      const r = await (await fetch("/api/auth/phone/start", {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({phone})
+      })).json();
+      if (r.token) { phoneToken = r.token; document.getElementById("phone_step1").style.display = "none";
+        document.getElementById("phone_step2").style.display = "block"; st.textContent = "Код отправлен в Telegram."; }
+      else { st.className = "status err"; st.textContent = "Не удалось отправить код."; }
+    }
+
+    async function phoneCode() {
+      const code = document.getElementById("phone_code").value.trim();
+      const st = document.getElementById("phone_status");
+      const r = await (await fetch("/api/auth/phone/code", {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({token: phoneToken, code})
+      })).json();
+      if (r.status === "authorized") location.href = "/";
+      else if (r.status === "password") { document.getElementById("phone_step2").style.display = "none";
+        document.getElementById("phone_step3").style.display = "block"; st.textContent = "Введите пароль 2FA."; }
+      else { st.className = "status err"; st.textContent = "Неверный код."; }
+    }
+
+    async function phonePassword() {
+      const password = document.getElementById("phone_password").value;
+      const st = document.getElementById("phone_status");
+      const r = await (await fetch("/api/auth/phone/password", {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({token: phoneToken, password})
+      })).json();
+      if (r.status === "authorized") location.href = "/";
+      else { st.className = "status err"; st.textContent = "Неверный пароль."; }
+    }
+
+    startQr();
+  </script>
+</body>
+</html>
