@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="30">
+  <title>Pet Owner Finder — Админ-панель</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #f5f6fa; margin: 0; padding: 24px; }
+    h1 { margin-top: 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+    .card { background: #fff; border-radius: 10px; padding: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .card .value { font-size: 32px; font-weight: 700; }
+    .card .label { color: #666; margin-top: 4px; }
+    .exports { margin-top: 32px; }
+    .exports a { margin-right: 10px; }
+  </style>
+</head>
+<body>
+  <h1>🐾 Pet Owner Finder</h1>
+  <div class="grid">
+    <div class="card"><div class="value">{{ stats.chats_active }}</div><div class="label">Обработано групп</div></div>
+    <div class="card"><div class="value">{{ stats.chats_pending }}</div><div class="label">Ожидают подключения</div></div>
+    <div class="card"><div class="value">{{ stats.dog_owners }}</div><div class="label">Владельцы собак</div></div>
+    <div class="card"><div class="value">{{ stats.cat_owners }}</div><div class="label">Владельцы кошек</div></div>
+    <div class="card"><div class="value">{{ stats.dog_and_cat_owners }}</div><div class="label">Кошки + собаки</div></div>
+    <div class="card"><div class="value">{{ stats.undefined }}</div><div class="label">Не определено</div></div>
+    <div class="card"><div class="value">{{ stats.new_today }}</div><div class="label">Новых пользователей сегодня</div></div>
+    <div class="card"><div class="value">{{ stats.total_users }}</div><div class="label">Всего пользователей</div></div>
+    <div class="card"><div class="value">{{ stats.processed_last_hour }}</div><div class="label">Сообщений за час</div></div>
+    <div class="card"><div class="value">{{ stats.errors_24h }}</div><div class="label">Ошибки (24ч)</div></div>
+    <div class="card"><div class="value">{{ stats.floodwait_24h }}</div><div class="label">FloodWait (24ч)</div></div>
+    <div class="card"><div class="value">✅</div><div class="label">Статус аккаунта</div></div>
+  </div>
+
+  <div class="exports">
+    <h2>Экспорт</h2>
+    {% for cat in ["dog", "cat", "dog_and_cat", "undefined", "all"] %}
+      <p><b>{{ cat }}</b>:
+        <a href="/api/export/{{ cat }}/csv">CSV</a>
+        <a href="/api/export/{{ cat }}/xlsx">Excel</a>
+        <a href="/api/export/{{ cat }}/json">JSON</a>
+      </p>
+    {% endfor %}
+  </div>
+</body>
+</html>
