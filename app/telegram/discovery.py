@@ -72,6 +72,10 @@ class Discovery:
             if await daily_limit.is_discovered_chat(identifier):
                 continue
 
+            excluded = settings.excluded_chat_set
+            if str(peer_id) in excluded or (username or "").lower() in excluded:
+                continue
+
             if await daily_limit.joins_today() >= settings.max_joins_per_day:
                 return
 

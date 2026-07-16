@@ -98,6 +98,13 @@ class PetFinderMonitor:
 
     # ---------------------------------------------------------------- chats
 
+    @staticmethod
+    def _is_excluded(chat_id: int, username: str | None) -> bool:
+        excluded = settings.excluded_chat_set
+        if not excluded:
+            return False
+        return str(chat_id) in excluded or (username or "").lower() in excluded
+
     async def _sync_dialogs(self) -> None:
         """Регистрирует все доступные группы/супергруппы/форумы."""
         async for dialog in self.client.iter_dialogs():
@@ -106,6 +113,11 @@ class PetFinderMonitor:
             if not is_group:
                 continue
             username = getattr(entity, "username", None)
+            if self._is_excluded(dialog.id, username):
+                async with SessionMaker() as session:
+                    await repository.delete_chat(session, dialog.id)
+                    await session.commit()
+                continue
             async with SessionMaker() as session:
                 await repository.upsert_chat(
                     session,
@@ -286,6 +298,8 @@ class PetFinderMonitor:
             if not event.is_group:
                 return
             chat = await event.get_chat()
+            if self._is_excluded(event.chat_id, getattr(chat, "username", None)):
+                return
             await self._process_message(event.message, event.chat_id, getattr(chat, "title", None))
         except FloodWaitError as e:
             await self._log("floodwait", f"realtime: {e.seconds}s")

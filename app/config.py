@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     min_messages_for_category: int = 2
     context_messages_count: int = 10
     dialogs_refresh_seconds: int = 300
+    # Чёрный список: chat_id или username через запятую — эти чаты не мониторятся
+    excluded_chats: str = ""
 
     # Авто-поиск и авто-вступление в публичные группы
     discovery_enabled: bool = False
@@ -63,6 +65,11 @@ class Settings(BaseSettings):
     @property
     def redis_url(self) -> str:
         return f"redis://{self.redis_host}:{self.redis_port}/0"
+
+    @property
+    def excluded_chat_set(self) -> set[str]:
+        """Идентификаторы исключённых чатов (chat_id и username, в нижнем регистре)."""
+        return {c.strip().lstrip("@").lower() for c in self.excluded_chats.split(",") if c.strip()}
 
     @property
     def discovery_keyword_list(self) -> list[str]:
