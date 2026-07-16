@@ -159,6 +159,31 @@ async def test_logic_hardening():
             aa._call_llm_with_system = saved
 
 
+async def test_audit_improvements():
+    import asyncio as _asyncio
+
+    from app.services import daily_limit
+    from app.telegram.monitor import PetFinderMonitor
+
+    # стабильный id заглушки не зависит от процесса и одинаков для одного идентификатора
+    a = PetFinderMonitor._pending_placeholder_id("@SomeGroup")
+    b = PetFinderMonitor._pending_placeholder_id("somegroup")
+    check("Audit: placeholder-id стабилен и регистронезависим", a == b and a < 0)
+
+    # атомарный суточный лимит не превышается при параллельной регистрации
+    await daily_limit._redis.delete(daily_limit._key())
+    results = await _asyncio.gather(*[daily_limit.try_register_new_user(1000 + i) for i in range(150)])
+    accepted = sum(1 for r in results if r)
+    check("Audit: атомарный лимит ровно 100 при гонке", accepted == 100, f"accepted={accepted}")
+
+    # скользящее окно «сообщений/час» считает недавние сообщения
+    before = await daily_limit.processed_last_hour()
+    await daily_limit.incr_processed()
+    await daily_limit.incr_processed()
+    after = await daily_limit.processed_last_hour()
+    check("Audit: скользящее окно processed растёт", after == before + 2, f"{before}->{after}")
+
+
 async def test_admin_auth():
     import httpx
     from httpx import ASGITransport
@@ -222,6 +247,7 @@ async def main():
     await test_exporter()
     await test_admin_panel()
     await test_logic_hardening()
+    await test_audit_improvements()
     await test_admin_auth()
     await test_telegram_connect()
     await test_ai()

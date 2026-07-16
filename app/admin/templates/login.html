@@ -99,6 +99,8 @@
       try {
         const r = await (await fetch("/api/auth/qr/poll?token=" + qrToken)).json();
         if (r.status === "authorized") { location.href = "/"; return; }
+        if (r.status === "forbidden") { document.getElementById("qr_status").className = "status err";
+          document.getElementById("qr_status").textContent = "Этот аккаунт не разрешён (не совпадает с ADMIN_USER_ID)."; qrToken = null; return; }
         if (r.status === "password") {
           document.getElementById("qr_pwd").style.display = "block";
           document.getElementById("qr_status").textContent = "Аккаунт защищён паролем — введите его.";
@@ -138,6 +140,7 @@
         method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({token: phoneToken, code})
       })).json();
       if (r.status === "authorized") location.href = "/";
+      else if (r.status === "forbidden") { st.className = "status err"; st.textContent = "Аккаунт не разрешён (не совпадает с ADMIN_USER_ID)."; }
       else if (r.status === "password") { document.getElementById("phone_step2").style.display = "none";
         document.getElementById("phone_step3").style.display = "block"; st.textContent = "Введите пароль 2FA."; }
       else { st.className = "status err"; st.textContent = "Неверный код."; }
@@ -150,6 +153,7 @@
         method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({token: phoneToken, password})
       })).json();
       if (r.status === "authorized") location.href = "/";
+      else if (r.status === "forbidden") { st.className = "status err"; st.textContent = "Аккаунт не разрешён (не совпадает с ADMIN_USER_ID)."; }
       else { st.className = "status err"; st.textContent = "Неверный пароль."; }
     }
 

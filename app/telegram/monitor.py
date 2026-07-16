@@ -1,5 +1,6 @@
 """Telethon-монитор: первоначальная загрузка истории и режим реального времени."""
 import asyncio
+import hashlib
 import logging
 import re
 
@@ -12,6 +13,7 @@ from telethon.errors import (
     PeerIdInvalidError,
 )
 from telethon.tl.types import Channel, Chat, Message, User
+from telethon.utils import get_peer_id
 
 from app.config import settings
 from app.db.database import SessionMaker
@@ -38,6 +40,13 @@ class PetFinderMonitor:
         self._discovery = Discovery(self.client, self._notify_admin, self._log)
         self._periodic_task: asyncio.Task | None = None
         self._discovery_task: asyncio.Task | None = None
+        self._bg_tasks: set[asyncio.Task] = set()
+
+    def _spawn(self, coro) -> None:
+        """Фоновая задача с хранением ссылки (иначе может быть собрана GC до завершения)."""
+        task = asyncio.create_task(coro)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -162,19 +171,30 @@ class PetFinderMonitor:
                 continue
             try:
                 entity = await self.client.get_entity(chat.username)
-                messages = await self.client.get_messages(entity, limit=1)
-                if messages is not None:
-                    async with SessionMaker() as session:
-                        await repository.upsert_chat(
-                            session, chat.chat_id, chat.title, chat.username, ChatStatus.ACTIVE
-                        )
-                        await session.commit()
-                    logger.info("Access gained to %s, will index", chat.title)
+                await self.client.get_messages(entity, limit=1)  # проверка доступа к чтению
+                real_id = get_peer_id(entity)  # заменяем placeholder-id на настоящий peer id
+                async with SessionMaker() as session:
+                    if real_id != chat.chat_id:
+                        await repository.delete_chat(session, chat.chat_id)
+                    await repository.upsert_chat(
+                        session, real_id, chat.title, chat.username, ChatStatus.ACTIVE
+                    )
+                    await session.commit()
+                logger.info("Access gained to %s, will index", chat.title)
             except FloodWaitError:
                 raise
             except Exception:
                 # чат всё ещё недоступен (приватный, несуществующий username и т.п.) — ждём дальше
                 continue
+
+    @staticmethod
+    def _pending_placeholder_id(identifier: str) -> int:
+        """Стабильный (не зависящий от процесса) отрицательный id для pending-заглушки.
+
+        Python hash() солится PYTHONHASHSEED и меняется между запусками, из-за чего
+        один и тот же чат получал разные id и плодил дубли в очереди."""
+        digest = hashlib.sha1(identifier.lower().lstrip("@").encode()).hexdigest()[:12]
+        return -int(digest, 16)
 
     async def handle_discovered_chat(self, identifier: str) -> None:
         """Обнаружен новый чат (например, ссылка в сообщении). Никогда не вступаем сами."""
@@ -188,7 +208,7 @@ class PetFinderMonitor:
             async with SessionMaker() as session:
                 await repository.upsert_chat(
                     session,
-                    chat_id=hash(identifier) & 0x7FFFFFFFFFFF,
+                    chat_id=self._pending_placeholder_id(identifier),
                     title=identifier,
                     username=identifier.lstrip("@"),
                     status=ChatStatus.PENDING_ACCESS,
@@ -343,7 +363,7 @@ class PetFinderMonitor:
             candidate = match.group(2)
             # только публичные username (не invite-ссылки и не служебные пути t.me)
             if not match.group(1) and candidate.lower() not in TME_RESERVED_PATHS and len(candidate) >= 5:
-                asyncio.create_task(self.handle_discovered_chat(candidate))
+                self._spawn(self.handle_discovered_chat(candidate))
 
         if not looks_pet_related(text):
             return None

@@ -1,6 +1,7 @@
 """Один Telegram-аккаунт с серверным входом (QR / номер+код) и мониторингом."""
 import asyncio
 import logging
+import time
 import uuid
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from app.telegram.monitor import PetFinderMonitor
 
 logger = logging.getLogger(__name__)
 
+PENDING_TTL_SECONDS = 600  # заброшенные незавершённые входы очищаются через 10 минут
+
 
 class PendingLogin:
     """Незавершённый вход: клиент создан, но ещё не авторизован."""
@@ -22,6 +25,7 @@ class PendingLogin:
         self.phone: str | None = None
         self.phone_code_hash: str | None = None
         self.qr = None
+        self.created_at = time.monotonic()
 
 
 class AccountManager:
@@ -89,15 +93,41 @@ class AccountManager:
         if f.exists():
             f.unlink()
 
-    async def _promote(self, token: str) -> None:
+    async def _sweep_pending(self) -> None:
+        """Отключает и удаляет заброшенные незавершённые входы (утечка соединений)."""
+        now = time.monotonic()
+        for token, p in list(self.pending.items()):
+            if now - p.created_at > PENDING_TTL_SECONDS:
+                self.pending.pop(token, None)
+                try:
+                    await p.client.disconnect()
+                except Exception:
+                    logger.exception("Failed to disconnect stale pending login")
+
+    async def _promote(self, token: str) -> bool:
+        """Завершает вход. Если задан ADMIN_USER_ID — впускает только этот аккаунт."""
         p = self.pending.pop(token, None)
         if not p:
-            return
+            return False
+        if settings.admin_user_id:
+            try:
+                me = await p.client.get_me()
+            except Exception:
+                me = None
+            if not me or me.id != settings.admin_user_id:
+                logger.warning("Login rejected: account is not the configured admin")
+                try:
+                    await p.client.log_out()
+                except Exception:
+                    logger.exception("Failed to log out non-admin account")
+                return False
         await self._start_monitor(p.client)
+        return True
 
     # ------------------------------------------------------------- QR login
 
     async def qr_start(self) -> dict:
+        await self._sweep_pending()
         if self.monitor:  # уже вошли — не создаём вторую сессию поверх той же
             return {"error": "already_logged_in"}
         client = self._new_client()
@@ -123,12 +153,13 @@ class AccountManager:
             return {"status": "waiting", "url": p.qr.url}
         except SessionPasswordNeededError:
             return {"status": "password", "token": token}
-        await self._promote(token)
-        return {"status": "authorized"}
+        ok = await self._promote(token)
+        return {"status": "authorized"} if ok else {"status": "forbidden"}
 
     # ------------------------------------------------------------- phone login
 
     async def phone_start(self, phone: str) -> dict:
+        await self._sweep_pending()
         if self.monitor:
             return {"error": "already_logged_in"}
         client = self._new_client()
@@ -149,16 +180,16 @@ class AccountManager:
             await p.client.sign_in(phone=p.phone, code=code, phone_code_hash=p.phone_code_hash)
         except SessionPasswordNeededError:
             return {"status": "password", "token": token}
-        await self._promote(token)
-        return {"status": "authorized"}
+        ok = await self._promote(token)
+        return {"status": "authorized"} if ok else {"status": "forbidden"}
 
     async def phone_password(self, token: str, password: str) -> dict:
         p = self.pending.get(token)
         if not p:
             return {"status": "unknown"}
         await p.client.sign_in(password=password)
-        await self._promote(token)
-        return {"status": "authorized"}
+        ok = await self._promote(token)
+        return {"status": "authorized"} if ok else {"status": "forbidden"}
 
 
 manager = AccountManager()
