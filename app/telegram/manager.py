@@ -104,8 +104,20 @@ class AccountManager:
                 except Exception:
                     logger.exception("Failed to disconnect stale pending login")
 
+    async def _close_other_pending(self, keep_token: str) -> None:
+        """Отключает остальные незавершённые входы: они держат тот же session-файл и блокируют его."""
+        for tok, other in list(self.pending.items()):
+            if tok == keep_token:
+                continue
+            self.pending.pop(tok, None)
+            try:
+                await other.client.disconnect()
+            except Exception:
+                logger.exception("Failed to disconnect competing pending login")
+
     async def _promote(self, token: str) -> bool:
         """Завершает вход. Если задан ADMIN_USER_ID — впускает только этот аккаунт."""
+        await self._close_other_pending(token)
         p = self.pending.pop(token, None)
         if not p:
             return False
@@ -130,6 +142,7 @@ class AccountManager:
         await self._sweep_pending()
         if self.monitor:  # уже вошли — не создаём вторую сессию поверх той же
             return {"error": "already_logged_in"}
+        await self._close_other_pending("")  # один активный вход за раз, иначе блокировка session
         client = self._new_client()
         await client.connect()
         qr = await client.qr_login()
@@ -162,6 +175,7 @@ class AccountManager:
         await self._sweep_pending()
         if self.monitor:
             return {"error": "already_logged_in"}
+        await self._close_other_pending("")  # один активный вход за раз, иначе блокировка session
         client = self._new_client()
         await client.connect()
         sent = await client.send_code_request(phone)

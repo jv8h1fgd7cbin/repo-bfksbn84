@@ -87,6 +87,10 @@ class Discovery:
                 await daily_limit.mark_discovered_chat(identifier)
                 continue
             if not relevant:
+                if reason == "ai_error":
+                    # ИИ временно недоступен — не помечаем группу обработанной, повторим позже
+                    logger.info("Skip %s — ИИ недоступен, повторим позже", title)
+                    continue
                 logger.info("Skip %s — не про питомцев: %s", title, reason)
                 await daily_limit.mark_discovered_chat(identifier)
                 continue
