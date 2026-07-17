@@ -152,9 +152,14 @@ async def api_qr_start():
 
 @app.get("/api/auth/qr/image")
 async def api_qr_image(url: str):
+    # PNG с крупным масштабом и «тихой зоной» — камера Telegram распознаёт стабильнее, чем мелкий SVG
     buff = io.BytesIO()
-    segno.make(url, error="m").save(buff, kind="svg", scale=6)
-    return Response(buff.getvalue(), media_type="image/svg+xml")
+    segno.make(url, error="m").save(buff, kind="png", scale=10, border=4)
+    return Response(
+        buff.getvalue(),
+        media_type="image/png",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/auth/qr/poll")

@@ -85,11 +85,18 @@
 
     function renderQr(url) {
       document.getElementById("qrbox").innerHTML =
-        `<img src="/api/auth/qr/image?url=${encodeURIComponent(url)}" alt="QR" style="width:230px;height:230px">`;
+        `<img src="/api/auth/qr/image?url=${encodeURIComponent(url)}" alt="QR" style="width:260px;height:260px;image-rendering:pixelated">`;
     }
 
     async function startQr() {
       const r = await (await fetch("/api/auth/qr/start", {method: "POST"})).json();
+      if (r.error === "already_logged_in") {
+        document.getElementById("qrbox").innerHTML =
+          '<div class="hint">Аккаунт уже подключён. Откройте панель или сначала выйдите из аккаунта.</div>';
+        document.getElementById("qr_status").innerHTML =
+          '<a href="/">Перейти в панель →</a>';
+        return;
+      }
       qrToken = r.token; renderQr(r.url);
       if (!qrPolling) { qrPolling = true; pollQr(); }
     }
