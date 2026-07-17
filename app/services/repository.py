@@ -198,6 +198,12 @@ async def delete_chat(session: AsyncSession, chat_id: int) -> None:
     await session.execute(delete(MonitoredChat).where(MonitoredChat.chat_id == chat_id))
 
 
+async def wipe_all(session: AsyncSession) -> None:
+    """Полностью очищает собранные данные (при входе с другого аккаунта)."""
+    for model in (UserMessage, PetOwner, MonitoredChat, SystemEvent):
+        await session.execute(delete(model))
+
+
 async def list_chats(session: AsyncSession) -> list[MonitoredChat]:
     rows = await session.execute(
         select(MonitoredChat).order_by(MonitoredChat.status, MonitoredChat.title)

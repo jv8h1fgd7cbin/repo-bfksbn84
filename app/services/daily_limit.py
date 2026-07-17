@@ -93,6 +93,29 @@ async def set_analyzed_count(user_id: int, count: int) -> None:
     await _redis.hset("analyzed_counts", user_id, count)
 
 
+async def get_account() -> int | None:
+    """user_id аккаунта, данные которого сейчас в системе."""
+    val = await _redis.get("account:user_id")
+    return int(val) if val else None
+
+
+async def set_account(user_id: int) -> None:
+    await _redis.set("account:user_id", user_id)
+
+
+async def reset_state() -> None:
+    """Сбрасывает Redis-состояние сбора (лимиты, известные юзеры, discovery, очереди).
+
+    Вызывается при входе с другого аккаунта, чтобы начать с чистого листа."""
+    await _redis.delete(
+        "known_users", "discovered_chats", "failed_analyses", "analyzed_counts",
+    )
+    for pattern in ("new_users:*", "joins:*", "processed:*"):
+        keys = await _redis.keys(pattern)
+        if keys:
+            await _redis.delete(*keys)
+
+
 def _minute_key(dt: datetime) -> str:
     return f"processed:{dt:%Y-%m-%d-%H-%M}"
 

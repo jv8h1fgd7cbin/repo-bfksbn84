@@ -9,6 +9,8 @@ from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 
 from app.config import settings
+from app.db.database import SessionMaker
+from app.services import daily_limit, repository
 from app.telegram.monitor import PetFinderMonitor
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,9 @@ class AccountManager:
         client = self._new_client()
         await client.connect()
         if await client.is_user_authorized():
+            me = await client.get_me()
+            if me:
+                await self._switch_account(me.id)
             await self._start_monitor(client)
         else:
             await client.disconnect()
@@ -116,25 +121,40 @@ class AccountManager:
                 logger.exception("Failed to disconnect competing pending login")
 
     async def _promote(self, token: str) -> bool:
-        """Завершает вход. Если задан ADMIN_USER_ID — впускает только этот аккаунт."""
+        """Завершает вход. Если задан ADMIN_USER_ID — впускает только этот аккаунт.
+
+        При входе с другого аккаунта данные предыдущего стираются (чистый лист)."""
         await self._close_other_pending(token)
         p = self.pending.pop(token, None)
         if not p:
             return False
-        if settings.admin_user_id:
+        try:
+            me = await p.client.get_me()
+        except Exception:
+            me = None
+        if not me:
+            return False
+        if settings.admin_user_id and me.id != settings.admin_user_id:
+            logger.warning("Login rejected: account is not the configured admin")
             try:
-                me = await p.client.get_me()
+                await p.client.log_out()
             except Exception:
-                me = None
-            if not me or me.id != settings.admin_user_id:
-                logger.warning("Login rejected: account is not the configured admin")
-                try:
-                    await p.client.log_out()
-                except Exception:
-                    logger.exception("Failed to log out non-admin account")
-                return False
+                logger.exception("Failed to log out non-admin account")
+            return False
+        await self._switch_account(me.id)
         await self._start_monitor(p.client)
         return True
+
+    async def _switch_account(self, user_id: int) -> None:
+        """Если вошли под другим аккаунтом — очищаем данные предыдущего и начинаем с нуля."""
+        previous = await daily_limit.get_account()
+        if previous is not None and previous != user_id:
+            logger.info("Account changed %s -> %s, wiping previous data", previous, user_id)
+            async with SessionMaker() as session:
+                await repository.wipe_all(session)
+                await session.commit()
+            await daily_limit.reset_state()
+        await daily_limit.set_account(user_id)
 
     # ------------------------------------------------------------- QR login
 

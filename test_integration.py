@@ -183,6 +183,18 @@ async def test_audit_improvements():
     after = await daily_limit.processed_last_hour()
     check("Audit: скользящее окно processed растёт", after == before + 2, f"{before}->{after}")
 
+    # смена аккаунта: reset_state очищает известных юзеров/лимиты/discovery
+    await daily_limit.mark_known_user(777)
+    await daily_limit.mark_discovered_chat("@g")
+    await daily_limit.try_register_new_user(888)
+    await daily_limit.reset_state()
+    cleared = (
+        not await daily_limit.is_known_user(777)
+        and not await daily_limit.is_discovered_chat("@g")
+        and await daily_limit.new_users_today() == 0
+    )
+    check("Audit: reset_state очищает состояние при смене аккаунта", cleared)
+
 
 async def test_admin_auth():
     import httpx
