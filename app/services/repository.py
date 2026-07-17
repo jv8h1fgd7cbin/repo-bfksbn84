@@ -128,17 +128,15 @@ async def log_event(session: AsyncSession, event_type: str, detail: str) -> None
     session.add(SystemEvent(event_type=event_type, detail=detail))
 
 
-async def search_users(
-    session: AsyncSession,
-    username: str | None = None,
-    user_id: int | None = None,
-    name: str | None = None,
-    category: Category | None = None,
-    chat_id: int | None = None,
-    date_from: datetime | None = None,
-    date_to: datetime | None = None,
-    limit: int = 200,
-) -> list[PetOwner]:
+def _search_query(
+    username: str | None,
+    user_id: int | None,
+    name: str | None,
+    category: Category | None,
+    chat_id: int | None,
+    date_from: datetime | None,
+    date_to: datetime | None,
+):
     query = select(PetOwner)
     if username:
         query = query.where(PetOwner.username.ilike(f"%{username}%"))
@@ -159,8 +157,41 @@ async def search_users(
         if date_to:
             sub = sub.where(UserMessage.message_date <= date_to)
         query = query.where(PetOwner.user_id.in_(sub))
-    rows = await session.execute(query.order_by(PetOwner.updated_at.desc()).limit(limit))
+    return query
+
+
+async def search_users(
+    session: AsyncSession,
+    username: str | None = None,
+    user_id: int | None = None,
+    name: str | None = None,
+    category: Category | None = None,
+    chat_id: int | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> list[PetOwner]:
+    query = _search_query(username, user_id, name, category, chat_id, date_from, date_to)
+    rows = await session.execute(
+        query.order_by(PetOwner.updated_at.desc()).limit(limit).offset(offset)
+    )
     return list(rows.scalars())
+
+
+async def count_search_users(
+    session: AsyncSession,
+    username: str | None = None,
+    user_id: int | None = None,
+    name: str | None = None,
+    category: Category | None = None,
+    chat_id: int | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+) -> int:
+    query = _search_query(username, user_id, name, category, chat_id, date_from, date_to)
+    result = await session.execute(select(func.count()).select_from(query.subquery()))
+    return result.scalar_one()
 
 
 async def delete_chat(session: AsyncSession, chat_id: int) -> None:

@@ -91,8 +91,11 @@
       <div class="card"><div class="value" id="s_flood">0</div><div class="label">FloodWait (24ч)</div></div>
     </div>
 
-    <div class="section-title">Поиск владельцев</div>
-    <div class="panel">
+    <div class="section-title" style="display:flex;align-items:center;gap:12px">
+      Пользователи
+      <button class="btn-ghost" id="users_toggle" onclick="toggleUsers()" style="text-transform:none;letter-spacing:0">Показать пользователей ▾</button>
+    </div>
+    <div class="panel" id="users_panel" style="display:none">
       <div class="filters">
         <div><label>Username</label><input id="f_username" placeholder="без @"></div>
         <div><label>User ID</label><input id="f_user_id" inputmode="numeric"></div>
@@ -111,11 +114,16 @@
         <div><label>Дата по</label><input id="f_date_to" type="date"></div>
       </div>
       <div class="btns">
-        <button class="btn-primary" onclick="doSearch()">Найти</button>
+        <button class="btn-primary" onclick="doSearch(0)">Найти</button>
         <button class="btn-ghost" onclick="resetSearch()">Сбросить</button>
         <span class="muted" id="search_count" style="align-self:center"></span>
       </div>
       <div id="results"></div>
+      <div class="btns" id="pager" style="display:none">
+        <button class="btn-ghost" id="pg_prev" onclick="prevPage()">← Назад</button>
+        <span class="muted" id="pg_info" style="align-self:center"></span>
+        <button class="btn-ghost" id="pg_next" onclick="nextPage()">Вперёд →</button>
+      </div>
     </div>
 
     <div class="section-title">Отслеживаемые чаты</div>
@@ -153,8 +161,26 @@
     function badge(cat) { return `<span class="badge b-${cat}">${CAT_LABEL[cat] || cat}</span>`; }
     function fmtDate(s) { return s ? new Date(s).toLocaleString("ru-RU") : "—"; }
 
-    async function doSearch() {
+    // Список пользователей скрыт по умолчанию и раскрывается по кнопке;
+    // грузится постранично, чтобы не тормозить на больших объёмах
+    const PAGE_SIZE = 50;
+    let usersOpen = false, pageOffset = 0, totalCount = 0;
+
+    function toggleUsers() {
+      usersOpen = !usersOpen;
+      document.getElementById("users_panel").style.display = usersOpen ? "block" : "none";
+      document.getElementById("users_toggle").textContent =
+        usersOpen ? "Скрыть пользователей ▴" : "Показать пользователей ▾";
+      if (usersOpen && !document.getElementById("results").innerHTML) doSearch(0);
+    }
+
+    function prevPage() { doSearch(Math.max(0, pageOffset - PAGE_SIZE)); }
+    function nextPage() { doSearch(pageOffset + PAGE_SIZE); }
+
+    async function doSearch(offset = 0) {
+      pageOffset = offset;
       const q = new URLSearchParams();
+      q.set("limit", PAGE_SIZE); q.set("offset", offset);
       const g = id => document.getElementById(id).value.trim();
       if (g("f_username")) q.set("username", g("f_username").replace(/^@/, ""));
       if (g("f_user_id")) q.set("user_id", g("f_user_id"));
@@ -164,8 +190,10 @@
       if (g("f_date_from")) q.set("date_from", g("f_date_from"));
       if (g("f_date_to")) q.set("date_to", g("f_date_to"));
       const data = await (await fetch("/api/search?" + q.toString())).json();
+      totalCount = data.count;
       document.getElementById("search_count").textContent = `Найдено: ${data.count}`;
       const box = document.getElementById("results");
+      updatePager();
       if (!data.results.length) { box.innerHTML = '<div class="empty">Ничего не найдено</div>'; return; }
       let rows = data.results.map(r => `<tr>
         <td>${r.user_id}</td>
@@ -181,10 +209,21 @@
         </tr></thead><tbody>${rows}</tbody></table>`;
     }
 
+    function updatePager() {
+      const pager = document.getElementById("pager");
+      if (totalCount <= PAGE_SIZE) { pager.style.display = "none"; return; }
+      pager.style.display = "flex";
+      const page = Math.floor(pageOffset / PAGE_SIZE) + 1;
+      const pages = Math.ceil(totalCount / PAGE_SIZE);
+      document.getElementById("pg_info").textContent = `Страница ${page} из ${pages}`;
+      document.getElementById("pg_prev").disabled = pageOffset === 0;
+      document.getElementById("pg_next").disabled = pageOffset + PAGE_SIZE >= totalCount;
+    }
+
     function resetSearch() {
       ["f_username","f_user_id","f_name","f_category","f_chat_id","f_date_from","f_date_to"]
         .forEach(id => document.getElementById(id).value = "");
-      doSearch();
+      doSearch(0);
     }
 
     async function loadChats() {
@@ -216,7 +255,7 @@
       await fetch("/api/account/logout", {method: "POST"}); location.href = "/login";
     }
     function refreshAll() { loadStats(); loadChats(); loadAccount(); }
-    buildExports(); refreshAll(); doSearch();
+    buildExports(); refreshAll();
     setInterval(refreshAll, 15000);
   </script>
 </body>

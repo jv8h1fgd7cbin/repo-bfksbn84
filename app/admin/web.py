@@ -92,13 +92,17 @@ async def api_search(
     chat_id: int | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
-    limit: int = Query(200, le=1000),
+    limit: int = Query(50, le=1000),
+    offset: int = Query(0, ge=0),
 ):
     async with SessionMaker() as session:
-        owners = await repository.search_users(
-            session, username, user_id, name, category, chat_id, date_from, date_to, limit
+        total = await repository.count_search_users(
+            session, username, user_id, name, category, chat_id, date_from, date_to
         )
-    return {"count": len(owners), "results": exporter.to_records(owners)}
+        owners = await repository.search_users(
+            session, username, user_id, name, category, chat_id, date_from, date_to, limit, offset
+        )
+    return {"count": total, "offset": offset, "limit": limit, "results": exporter.to_records(owners)}
 
 
 @app.get("/api/chats")
