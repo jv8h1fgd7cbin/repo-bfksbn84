@@ -167,8 +167,9 @@ class Discovery:
             await self._log("error", "too many channels: cannot auto-join")
             return True
         except Exception:
-            logger.exception("Failed to join %s", title)
-            await self._queue_no_access(peer_id, title, username, "Ошибка вступления")
+            # прочие ошибки вступления (не приватность) — не спамим админа и не засоряем список,
+            # просто пропускаем эту группу
+            logger.exception("Failed to join %s, skipping", title)
             return True
 
     async def _queue_no_access(self, chat_id: int, title: str, username: str | None, reason: str) -> None:

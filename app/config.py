@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     excluded_chats: str = ""
 
     # Авто-поиск и авто-вступление в публичные группы
-    discovery_enabled: bool = False
+    discovery_enabled: bool = True
     discovery_keywords: str = (
         "собаки,собака,собаководы,щенки,щенок,питомник собак,кинолог,дрессировка собак,"
         "кошки,кошка,котята,котёнок,кошатники,котолюбы,котомания,"
