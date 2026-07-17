@@ -80,7 +80,12 @@ if settings.ai_provider == "anthropic":
                     retry_after = float(resp.headers.get("retry-after", "") or 0)
                 except ValueError:
                     retry_after = 0
-                wait = retry_after or min(settings.ai_backoff_base_seconds * 2**attempt, 300)
+                if not retry_after:
+                    # прокси пишет время ожидания в теле: "retry in about N seconds"
+                    m = re.search(r"retry in about (\d+) seconds", resp.text)
+                    if m:
+                        retry_after = float(m.group(1)) + 5
+                wait = min(retry_after, 600) or min(settings.ai_backoff_base_seconds * 2**attempt, 300)
                 logger.warning("AI %s, waiting %.0fs (attempt %d/%d)",
                                resp.status_code, wait, attempt + 1, settings.ai_retry_max_attempts)
                 last_exc = httpx.HTTPStatusError(
